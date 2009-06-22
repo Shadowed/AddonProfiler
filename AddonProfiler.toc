@@ -1,0 +1,7 @@
+## Interface: 30100
+## Title: Addon Profiler
+## Notes: Easy addon cpu and garbage generator profiler
+## Author: Mayen
+## SavedVariables: AddpnProfilerDB
+
+AddonProfiler.lua
