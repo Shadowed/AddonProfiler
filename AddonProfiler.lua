@@ -454,9 +454,9 @@ function AP:CreateFrame()
 	self.selectFrame:ClearAllPoints()
 	self.selectFrame:SetPoint("TOPRIGHT", self.frame, "TOPLEFT", -5, 25)
 	self.selectFrame:SetScript("OnShow", function(self)
-		self.quick:SetChecked(AddOnProfilerDB.quickPoll)
-		self.modules:SetChecked(AddOnProfilerDB.includeModules)
-		self.duration:SetNumber(AddOnProfilerDB.duration or 0)
+		self.quick:SetChecked(AP.db.quickPoll)
+		self.modules:SetChecked(AP.db.includeModules)
+		self.duration:SetNumber(AP.db.duration or 0)
 		self.cpu:SetChecked(GetCVarBool("scriptProfile"))
 	end)
 	
@@ -468,7 +468,7 @@ function AP:CreateFrame()
 	self.selectFrame.duration:ClearAllPoints()
 	self.selectFrame.duration:SetPoint("TOPLEFT", self.selectFrame, "TOPLEFT", 8, -18)
 	self.selectFrame.duration:SetScript("OnTextChanged", function(self)
-		AddOnProfilerDB.duration = self:GetNumber() or 0
+		AP.db.duration = self:GetNumber() or 0
 	end)
 
 	self.selectFrame.duration.text = self.selectFrame.duration:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -498,7 +498,7 @@ function AP:CreateFrame()
 	self.selectFrame.modules:SetScript("OnEnter", showTooltip)
 	self.selectFrame.modules:SetScript("OnLeave", hideTooltip)
 	self.selectFrame.modules:SetScript("OnClick", function(self)
-		AddOnProfilerDB.includeModules = self:GetChecked() and true or false
+		AP.db.includeModules = self:GetChecked() and true or false
 	end)
 	self.selectFrame.modules.tooltip = L["Any addons that have another addon listed as a single dependency will have their memory and CPU stats merged into their parents addon."]
 	self.selectFrame.modules:SetPoint("TOPLEFT", self.selectFrame.duration, "BOTTOMLEFT", -5, -5)
@@ -513,7 +513,7 @@ function AP:CreateFrame()
 	self.selectFrame.quick:SetScript("OnEnter", showTooltip)
 	self.selectFrame.quick:SetScript("OnLeave", hideTooltip)
 	self.selectFrame.quick:SetScript("OnClick", function(self)
-		AddOnProfilerDB.quickPoll = self:GetChecked() and true or false
+		AP.db.quickPoll = self:GetChecked() and true or false
 	end)
 	self.selectFrame.quick.tooltip = L["This will poll for garbage created every frame update, this will make the garbage collected numbers more accurate but it uses more CPU during an active profile."]
 	self.selectFrame.quick:SetPoint("TOPLEFT", self.selectFrame.modules, "BOTTOMLEFT", 0, -5)
@@ -555,11 +555,11 @@ end
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:SetScript("OnEvent", function(self, event, addon)
-	if( addon ~= "AddOnProfiler" ) then return end
+	if( addon ~= "AddonProfiler" ) then return end
 	self:UnregisterAllEvents()
 	
-	AddOnProfilerDB = AddOnProfilerDB or {includeModules = true, quickPoll = false, duration = 120}
-	AP.db = AddOnProfilerDB
+	AddonProfilerDB = AddonProfilerDB or {includeModules = true, quickPoll = false, duration = 120}
+	AP.db = AddonProfilerDB
 	
 	-- CPU profiling is not enabled until you do a UI reload, so we have to check it here to see if it's enabled
 	cpuProfiling = GetCVarBool("scriptProfile")

@@ -2,6 +2,6 @@
 ## Title: Addon Profiler
 ## Notes: Easy addon cpu and garbage generator profiler
 ## Author: Mayen
-## SavedVariables: AddpnProfilerDB
+## SavedVariables: AddonProfilerDB
 
 AddonProfiler.lua
