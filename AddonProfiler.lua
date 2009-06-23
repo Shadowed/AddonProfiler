@@ -4,8 +4,6 @@ local MAX_ROWS = 12
 local sortKey, sortOrder = "totalCPU", true
 local addonList, profileData, hasModules, expandedAddons = {}, {}, {}, {}
 local timeElapsed, profileEndTime, cpuProfiling, profilerInterrupted = 0
-local profileFrame = CreateFrame("Frame")
-profileFrame:Hide()
 
 AddonProfiler = AP
 
@@ -17,11 +15,9 @@ local L = {
 	["Profile duration (seconds)"] = "Profile duration (seconds)",
 	["Include modules"] = "Include modules",
 	["%d seconds left"] = "%d seconds left",
-	["Speedy polling"] = "Speedy polling",
 	["Enable CPU profiling"] = "Enable CPU profiling",
-	["Any addons that have another addon listed as a single dependency will have their memory and CPU stats merged into their parents addon."] = "Any addons that have another addon listed as a single dependency will have their memory and CPU stats merged into their parents addon.",
+	["Automatically merges any children addons into their parents, all CPU and memory stats are merged into their parent. This will give you a more accurate overview of what resources addons are actually using."] = "Automatically merges any children addons into their parents, all CPU and memory stats are merged into their parent. This will give you a more accurate overview of what resources addons are actually using.",
 	["Enables CPU profiling, you will need to do a /console reloadui for this to be enabled."] = "Enables CPU profiling, you will need to do a /console reloadui for this to be enabled.",
-	["This will poll for garbage created every frame update, this will make the garbage collected numbers more accurate but it uses more CPU during an active profile."] = "This will poll for garbage created every frame update, this will make the garbage collected numbers more accurate but it uses more CPU during an active profile.",
 	["Finished profiling"] = "Finished profiling",
 	["Profiler interrupted"] = "Profiler interrupted",
 	["How long the profiler should run, you have to set a number in seconds."] = "How long the profiler should run, you have to set a number in seconds.",
@@ -29,16 +25,25 @@ local L = {
 	["CPU/Sec"] = "CPU/Sec",
 	["Avg/Sec"] = "Avg/Sec",
 	["Memory"] = "Memory",
+	["Track memory garbage"] = "Track memory garbage",
+	["Tracks how much garbage addons generate, while this should work fine it might be prone to bugs due to manually running the garbage collection."] = "Tracks how much garbage addons generate, while this should work fine it might be prone to bugs due to manually running the garbage collection.",
 	["Garbage"] = "Garbage",
 }
 
+-- Profile memory stats
 local memory, garbage, data
 local function profileMemory()
-	-- We're done profiling, so force a full garbage collection to get the total GC
-	if( GetTime() <= profileEndTime ) then
-		collectgarbage("collect")
+	if( AP.db.garbage ) then
+		-- We're profiling still, so perform a GC step and will see how much garbage was collected
+		if( GetTime() <= profileEndTime ) then
+			collectgarbage("step")
+		-- Done profiling, do a full GC to make sure we catch all of the garbage generated
+		else
+			collectgarbage("collect")
+		end
 	end
 
+	-- Record memory usage
 	UpdateAddOnMemoryUsage()
 	for _, id in pairs(addonList) do profileData[id].totalMemory = 0 end
 	for _, id in pairs(addonList) do
@@ -46,7 +51,7 @@ local function profileMemory()
 		data = profileData[id]
 		
 		-- Memory was reduced, meaning garbage was created.
-		if( memory <= data.lastMemory ) then
+		if( AP.db.garbage and memory <= data.lastMemory ) then
 			garbage = data.lastMemory - memory
 
 			data.garbage = data.garbage + garbage
@@ -65,6 +70,7 @@ local function profileMemory()
 	end
 end
 
+-- Profile CPU usage
 local cpu, cpuDiff
 local function profileCPU()
 	UpdateAddOnCPUUsage()
@@ -90,7 +96,9 @@ local function profileCPU()
 	end
 end
 
-local function slowPoll(self, elapsed)
+-- Profile timer
+local profileFrame = CreateFrame("Frame")
+profileFrame:SetScript("OnUpdate", function(self, elapsed)
 	timeElapsed = timeElapsed + elapsed
 	if( timeElapsed >= 1 ) then
 		timeElapsed = 0
@@ -100,20 +108,10 @@ local function slowPoll(self, elapsed)
 	
 		AP:UpdateFrame()
 	end
-end
+end)
+profileFrame:Hide()
 
-local function fastPoll(self, elapsed)
-	profileMemory()
-	
-	timeElapsed = timeElapsed + elapsed
-	if( timeElapsed >= 1 ) then
-		timeElapsed = 0
-		
-		profileCPU()
-		AP:UpdateFrame()
-	end
-end
-
+-- Start running the profiler
 local function startProfiling()
 	AP.selectFrame.start:SetText(L["Stop"])
 	AP.selectFrame.start.isStarted = true
@@ -124,9 +122,13 @@ local function startProfiling()
 
 	-- Reset stats
 	ResetCPUUsage()
-	collectgarbage("collect")
-	
 	timeElapsed = 0
+	
+	-- Stop the GC so we can make sure our data is accurate
+	if( AP.db.garbage ) then
+		collectgarbage("collect")
+		collectgarbage("stop")
+	end
 	
 	-- Update and grab initial info and lets go
 	UpdateAddOnMemoryUsage()
@@ -184,19 +186,25 @@ local function startProfiling()
 	AP.infoFrame.totalCPU:Show()
 	AP:UpdateFrame()
 
-	-- Start the frame
-	profileFrame:SetScript("OnUpdate", AP.db.quickPoll and fastPoll or slowPoll)
+	-- Start profiling
 	profileFrame:Show()
 end
 
+-- Stop running the profiler
 local function stopProfiling()
 	AP.selectFrame.start.isStarted = nil
 	AP.selectFrame.start:SetText(L["Start"])
 	profileFrame:Hide()
-
+	
+	-- Resume normal garbage collection
+	if( AP.db.garbage ) then
+		collectgarbage("restart")
+	end
+		
 	AP:UpdateFrame()
 end
 
+-- Display code
 local function sortAddons(a, b)
 	-- use average cpu stats not pcu per second when we're not scanning
 	if( not AP.selectFrame.start.isStarted and sortKey == "cpuSecond" ) then
@@ -298,10 +306,14 @@ function AP:UpdateFrame()
 				row.totalMemory:SetFormattedText("%.2f %s", profileData[name].totalMemory, "KiB")
 			end
 
-			if( profileData[name].garbage > 1024 ) then
-				row.garbage:SetFormattedText("%.2f %s", profileData[name].garbage / 1024, "MiB")
+			if( AP.db.garbage ) then
+				if( profileData[name].garbage > 1024 ) then
+					row.garbage:SetFormattedText("%.2f %s", profileData[name].garbage / 1024, "MiB")
+				else
+					row.garbage:SetFormattedText("%.2f %s", profileData[name].garbage, "KiB")
+				end
 			else
-				row.garbage:SetFormattedText("%.2f %s", profileData[name].garbage, "KiB")
+				row.garbage:SetText("---")
 			end
 
 			rowID = rowID + 1
@@ -309,6 +321,7 @@ function AP:UpdateFrame()
 	end
 end
 
+-- Create GUI
 function AP:CreateFrame()
 	if( self.frame ) then return end
 	local backdrop = {
@@ -509,7 +522,7 @@ function AP:CreateFrame()
 	self.selectFrame:ClearAllPoints()
 	self.selectFrame:SetPoint("TOPRIGHT", self.frame, "TOPLEFT", -5, 25)
 	self.selectFrame:SetScript("OnShow", function(self)
-		self.quick:SetChecked(AP.db.quickPoll)
+		self.garbage:SetChecked(AP.db.garbage)
 		self.modules:SetChecked(AP.db.includeModules)
 		self.duration:SetNumber(AP.db.duration or 0)
 		self.filter:SetText(AP.db.filter or "")
@@ -574,26 +587,26 @@ function AP:CreateFrame()
 	self.selectFrame.modules:SetScript("OnClick", function(self)
 		AP.db.includeModules = self:GetChecked() and true or false
 	end)
-	self.selectFrame.modules.tooltip = L["Any addons that have another addon listed as a single dependency will have their memory and CPU stats merged into their parents addon."]
+	self.selectFrame.modules.tooltip = L["Automatically merges any children addons into their parents, all CPU and memory stats are merged into their parent. This will give you a more accurate overview of what resources addons are actually using."]
 	self.selectFrame.modules:SetPoint("TOPLEFT", self.selectFrame.duration, "BOTTOMLEFT", -5, -5)
 	self.selectFrame.modules.text = self.selectFrame.modules:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	self.selectFrame.modules.text:SetText(L["Include modules"])
 	self.selectFrame.modules.text:SetPoint("TOPLEFT", self.selectFrame.modules, "TOPRIGHT", -1, -3)
 
-	self.selectFrame.quick = CreateFrame("CheckButton", nil, self.selectFrame, "OptionsCheckButtonTemplate")
-	self.selectFrame.quick:SetHeight(18)
-	self.selectFrame.quick:SetWidth(18)
-	self.selectFrame.quick:SetChecked(true)
-	self.selectFrame.quick:SetScript("OnEnter", showTooltip)
-	self.selectFrame.quick:SetScript("OnLeave", hideTooltip)
-	self.selectFrame.quick:SetScript("OnClick", function(self)
-		AP.db.quickPoll = self:GetChecked() and true or false
+	self.selectFrame.garbage = CreateFrame("CheckButton", nil, self.selectFrame, "OptionsCheckButtonTemplate")
+	self.selectFrame.garbage:SetHeight(18)
+	self.selectFrame.garbage:SetWidth(18)
+	self.selectFrame.garbage:SetChecked(true)
+	self.selectFrame.garbage:SetScript("OnEnter", showTooltip)
+	self.selectFrame.garbage:SetScript("OnLeave", hideTooltip)
+	self.selectFrame.garbage:SetScript("OnClick", function(self)
+		AP.db.garbage = self:GetChecked() and true or false
 	end)
-	self.selectFrame.quick.tooltip = L["This will poll for garbage created every frame update, this will make the garbage collected numbers more accurate but it uses more CPU during an active profile."]
-	self.selectFrame.quick:SetPoint("TOPLEFT", self.selectFrame.modules, "BOTTOMLEFT", 0, -5)
-	self.selectFrame.quick.text = self.selectFrame.quick:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-	self.selectFrame.quick.text:SetText(L["Speedy polling"])
-	self.selectFrame.quick.text:SetPoint("TOPLEFT", self.selectFrame.quick, "TOPRIGHT", -1, -3)
+	self.selectFrame.garbage.tooltip = L["Tracks how much garbage addons generate, while this should work fine it might be prone to bugs due to manually running the garbage collection."]
+	self.selectFrame.garbage:SetPoint("TOPLEFT", self.selectFrame.modules, "BOTTOMLEFT", 0, -5)
+	self.selectFrame.garbage.text = self.selectFrame.garbage:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	self.selectFrame.garbage.text:SetText(L["Track memory garbage"])
+	self.selectFrame.garbage.text:SetPoint("TOPLEFT", self.selectFrame.garbage, "TOPRIGHT", -1, -3)
 
 	self.selectFrame.cpu = CreateFrame("CheckButton", nil, self.selectFrame, "OptionsCheckButtonTemplate")
 	self.selectFrame.cpu:SetHeight(18)
@@ -605,7 +618,7 @@ function AP:CreateFrame()
 	self.selectFrame.cpu:SetScript("OnClick", function(self)
 		SetCVar("scriptProfile", self:GetChecked() and "1" or "0")
 	end)
-	self.selectFrame.cpu:SetPoint("TOPLEFT", self.selectFrame.quick, "BOTTOMLEFT", 0, -5)
+	self.selectFrame.cpu:SetPoint("TOPLEFT", self.selectFrame.garbage, "BOTTOMLEFT", 0, -5)
 	self.selectFrame.cpu.text = self.selectFrame.cpu:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	self.selectFrame.cpu.text:SetText(L["Enable CPU profiling"])
 	self.selectFrame.cpu.text:SetPoint("TOPLEFT", self.selectFrame.cpu, "TOPRIGHT", -1, -3)
@@ -632,7 +645,7 @@ frame:SetScript("OnEvent", function(self, event, addon)
 	if( addon ~= "AddonProfiler" ) then return end
 	self:UnregisterAllEvents()
 	
-	AddonProfilerDB = AddonProfilerDB or {includeModules = true, quickPoll = false, duration = 120}
+	AddonProfilerDB = AddonProfilerDB or {includeModules = true, garbage = false, duration = 120}
 	AP.db = AddonProfilerDB
 	
 	-- CPU profiling is not enabled until you do a UI reload, so we have to check it here to see if it's enabled
