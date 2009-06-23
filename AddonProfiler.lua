@@ -154,10 +154,10 @@ local function startProfiling()
 				-- Indicates that when we display the parents addon, we need to find it's children too
 				if( AP.db.includeModules ) then
 					local requiredDep, hasSecond = GetAddOnDependencies(id)
-					-- Try and detect the parent through (.+)_ blah
+					-- Try and detect the parent through (.-)_blah
 					local parent
 					if( not parent and string.match(name, "%_") ) then
-						local parentName = string.match(name, "(.+)_")
+						local parentName = string.match(name, "(.-)_")
 						if( parentName and GetAddOnInfo(parentName) and IsAddOnLoaded(parentName) ) then
 							parent = parentName
 						end
