@@ -32,7 +32,7 @@ local L = {
 	["Garbage"] = "Garbage",
 }
 
-local memory
+local memory, garbage, data
 local function profileMemory()
 	-- We're done profiling, so force a full garbage collection to get the total GC
 	if( GetTime() <= profileEndTime ) then
@@ -40,29 +40,53 @@ local function profileMemory()
 	end
 
 	UpdateAddOnMemoryUsage()
+	for _, id in pairs(addonList) do profileData[id].totalMemory = 0 end
 	for _, id in pairs(addonList) do
 		memory = GetAddOnMemoryUsage(id)
+		data = profileData[id]
 		
 		-- Memory was reduced, meaning garbage was created.
-		if( memory <= profileData[id].totalMemory ) then
-			profileData[id].garbage = profileData[id].garbage + (profileData[id].totalMemory - memory)
+		if( memory <= data.lastMemory ) then
+			garbage = data.lastMemory - memory
+
+			data.garbage = data.garbage + garbage
+			
+			if( data.parent ) then
+				profileData[data.parent].garbage = profileData[data.parent].garbage + garbage
+			end
 		end
 		
-		profileData[id].totalMemory = memory
+		data.lastMemory = memory
+		data.totalMemory = data.totalMemory + memory
+		
+		if( data.parent ) then
+			profileData[data.parent].totalMemory = profileData[data.parent].totalMemory + memory
+		end
 	end
 end
 
 local cpu, cpuDiff
 local function profileCPU()
 	UpdateAddOnCPUUsage()
+
+	for _, id in pairs(addonList) do profileData[id].totalCPU = 0 end
 	for _, id in pairs(addonList) do
+		data = profileData[id]
 		cpu = GetAddOnCPUUsage(id)
-		cpuDiff = cpu - profileData[id].totalCPU
+		cpuDiff = cpu - data.lastCPU
 		
-		profileData[id].cpuSecond = cpuDiff
-		profileData[id].cpuAverage = profileData[id].cpuAverage + cpuDiff
-		profileData[id].cpuChecks = profileData[id].cpuChecks + 1
-		profileData[id].totalCPU = cpu
+		data.cpuSecond = cpuDiff
+		data.cpuAverage = data.cpuAverage + cpuDiff
+		data.cpuChecks = data.cpuChecks + 1
+		data.lastCPU = cpu
+		data.totalCPU = data.totalCPU + cpu
+		
+		if( data.parent ) then
+			profileData[data.parent].cpuAverage = profileData[data.parent].cpuAverage + cpuDiff
+			profileData[data.parent].cpuChecks = profileData[data.parent].cpuChecks + 1
+			profileData[data.parent].cpuSecond = profileData[data.parent].cpuSecond + cpuDiff
+			profileData[data.parent].totalCPU = profileData[data.parent].totalCPU + cpu
+		end
 	end
 end
 
@@ -115,24 +139,40 @@ local function startProfiling()
 		if( IsAddOnLoaded(id) ) then
 			local name = GetAddOnInfo(id)
 			if( not AP.db.filter or AP.db.filter == "" or string.match(name, AP.db.filter) ) then
-				local requiredDep, hasSecond = GetAddOnDependencies(id)
-				local parent = not hasSecond and requiredDep
-				
+				table.insert(addonList, name)
+
 				profileData[name] = profileData[name] or {}
-				profileData[name].totalCPU = GetAddOnCPUUsage(id)
-				profileData[name].totalMemory = GetAddOnMemoryUsage(id)
+				profileData[name].lastCPU = GetAddOnCPUUsage(id)
+				profileData[name].lastMemory = GetAddOnMemoryUsage(id)
+				profileData[name].totalCPU = profileData[name].lastCPU
+				profileData[name].totalMemory = profileData[name].lastMemory
 				profileData[name].cpuSecond = 0
 				profileData[name].cpuAverage = 0
 				profileData[name].cpuChecks = 0
 				profileData[name].garbage = 0
-				profileData[name].parent = parent
 				
 				-- Indicates that when we display the parents addon, we need to find it's children too
-				if( parent and AP.db.includeModules ) then
-					hasModules[parent] = true
+				if( AP.db.includeModules ) then
+					local requiredDep, hasSecond = GetAddOnDependencies(id)
+					-- Try and detect the parent through (.+)_ blah
+					local parent
+					if( not parent and string.match(name, "%_") ) then
+						local parentName = string.match(name, "(.+)_")
+						if( parentName and GetAddOnInfo(parentName) and IsAddOnLoaded(parentName) ) then
+							parent = parentName
+						end
+					end
+
+					-- Pattern failed, so will default
+					if( not parent and not hasSecond and requiredDep ) then
+						parent = requiredDep
+					end				
+
+					if( parent ) then
+						hasModules[parent] = true
+						profileData[name].parent = parent
+					end
 				end
-				
-				table.insert(addonList, name)
 			end
 		end
 	end
@@ -158,6 +198,19 @@ local function stopProfiling()
 end
 
 local function sortAddons(a, b)
+	-- use average cpu stats not pcu per second when we're not scanning
+	if( not AP.selectFrame.start.isStarted and sortKey == "cpuSecond" ) then
+		local aAvg = profileData[a].cpuAverage / profileData[a].cpuChecks
+		local bAvg = profileData[b].cpuAverage / profileData[b].cpuChecks
+		if( aAvg == bAvg ) then
+			return a < b
+		elseif( not sortOrder ) then
+			return aAvg < bAvg
+		end
+
+		return aAvg > bAvg
+	end
+
 	if( profileData[a][sortKey] == profileData[b][sortKey] ) then
 		return a < b
 	elseif( not sortOrder ) then
@@ -168,6 +221,7 @@ local function sortAddons(a, b)
 end
 
 local rowList = {}
+local performanceTotals = {}
 function AP:UpdateFrame()
 	if( not AP.frame:IsVisible() ) then return end
 	
@@ -231,38 +285,23 @@ function AP:UpdateFrame()
 				row:SetText(title)
 			end
 			
-			local totalCPU, cpuSecond, cpuAverage, cpuChecks, totalMemory, garbage = profileData[name].totalCPU, profileData[name].cpuSecond, profileData[name].cpuAverage, profileData[name].cpuChecks, profileData[name].totalMemory, profileData[name].garbage
-			-- Grab all of the modules settings
-			if( hasModules[name] ) then
-				for _, data in pairs(profileData) do
-					if( data.parent == name ) then
-						totalCPU = totalCPU + data.totalCPU
-						cpuSecond = cpuSecond + data.cpuSecond
-						cpuAverage = cpuAverage + data.cpuAverage
-						cpuChecks = cpuChecks + data.cpuChecks
-						totalMemory = totalMemory + data.totalMemory
-						garbage = garbage + data.garbage
-					end
-				end
-			end
-			
 			-- Set CPU stats if they're enabled
 			if( cpuProfiling ) then
-				row.totalCPU:SetFormattedText("%.1f", totalCPU)
-				row.cpu:SetFormattedText("%.1f", profiling and cpuSecond or (cpuAverage / cpuChecks))
+				row.totalCPU:SetFormattedText("%.2f", profileData[name].totalCPU)
+				row.cpu:SetFormattedText("%.2f", profiling and profileData[name].cpuSecond or (profileData[name].cpuAverage / profileData[name].cpuChecks))
 			end
 			
 			-- Set memory stats
-			if( totalMemory > 1024 ) then
-				row.totalMemory:SetFormattedText("%.1f %s", totalMemory / 1024, "MiB")
+			if( profileData[name].totalMemory > 1024 ) then
+				row.totalMemory:SetFormattedText("%.2f %s", profileData[name].totalMemory / 1024, "MiB")
 			else
-				row.totalMemory:SetFormattedText("%.1f %s", totalMemory, "KiB")
+				row.totalMemory:SetFormattedText("%.2f %s", profileData[name].totalMemory, "KiB")
 			end
 
-			if( garbage > 1024 ) then
-				row.garbage:SetFormattedText("%.1f %s", garbage / 1024, "MiB")
+			if( profileData[name].garbage > 1024 ) then
+				row.garbage:SetFormattedText("%.2f %s", profileData[name].garbage / 1024, "MiB")
 			else
-				row.garbage:SetFormattedText("%.1f %s", garbage, "KiB")
+				row.garbage:SetFormattedText("%.2f %s", profileData[name].garbage, "KiB")
 			end
 
 			rowID = rowID + 1
@@ -273,7 +312,7 @@ end
 function AP:CreateFrame()
 	if( self.frame ) then return end
 	local backdrop = {
-		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+		bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
 		edgeFile = "Interface\\ChatFrame\\ChatFrameBackground",
 		edgeSize = 1,
 		insets = {left = 1, right = 1, top = 1, bottom = 1}}
@@ -350,7 +389,7 @@ function AP:CreateFrame()
 		row.totalMemory:SetPoint("TOPLEFT", row.cpu, "TOPLEFT", 55, 0)
 		
 		row.garbage = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-		row.garbage:SetPoint("TOPLEFT", row.totalMemory, "TOPLEFT", 70, 0)
+		row.garbage:SetPoint("TOPLEFT", row.totalMemory, "TOPLEFT", 75, 0)
 		
 		if( id > 1 ) then
 			row:SetPoint("TOPLEFT", self.rows[id - 1], "BOTTOMLEFT", 0, -2)
