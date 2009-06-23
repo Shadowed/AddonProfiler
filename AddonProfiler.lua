@@ -1,8 +1,19 @@
 local AP = {}
+local ROW_HEIGHT = 20
+local MAX_ROWS = 12
+local sortKey, sortOrder = "totalCPU", true
+local addonList, profileData, hasModules, expandedAddons = {}, {}, {}, {}
+local timeElapsed, profileEndTime, cpuProfiling, profilerInterrupted = 0
+local profileFrame = CreateFrame("Frame")
+profileFrame:Hide()
+
+AddonProfiler = AP
 
 local L = {
 	["Start"] = "Start",
 	["Stop"] = "Stop",
+	["Let's you filter out addons that should not be included in the profiling, not required."] = "Let's you filter out addons that should not be included in the profiling, not required.",
+	["Addon filter"] = "Addon filter",
 	["Profile duration (seconds)"] = "Profile duration (seconds)",
 	["Include modules"] = "Include modules",
 	["%d seconds left"] = "%d seconds left",
@@ -13,23 +24,15 @@ local L = {
 	["This will poll for garbage created every frame update, this will make the garbage collected numbers more accurate but it uses more CPU during an active profile."] = "This will poll for garbage created every frame update, this will make the garbage collected numbers more accurate but it uses more CPU during an active profile.",
 	["Finished profiling"] = "Finished profiling",
 	["Profiler interrupted"] = "Profiler interrupted",
+	["How long the profiler should run, you have to set a number in seconds."] = "How long the profiler should run, you have to set a number in seconds.",
 	["CPU"] = "CPU",
 	["CPU/Sec"] = "CPU/Sec",
+	["Avg/Sec"] = "Avg/Sec",
 	["Memory"] = "Memory",
 	["Garbage"] = "Garbage",
 }
 
-local ROW_HEIGHT = 20
-local MAX_ROWS = 12
-local sortKey, sortOrder = "totalCPU", true
-local addonList, profileData, hasModules, expandedAddons = {}, {}, {}, {}
-local timeElapsed, profileEndTime, cpuProfiling, profilingInterrupted = 0
-local profileFrame = CreateFrame("Frame")
-profileFrame:Hide()
-
-test = {profile = profileData, modules = hasModules, list = addonList}
-
-local memory, cpu
+local memory
 local function profileMemory()
 	-- We're done profiling, so force a full garbage collection to get the total GC
 	if( GetTime() <= profileEndTime ) then
@@ -49,12 +52,16 @@ local function profileMemory()
 	end
 end
 
+local cpu, cpuDiff
 local function profileCPU()
 	UpdateAddOnCPUUsage()
 	for _, id in pairs(addonList) do
 		cpu = GetAddOnCPUUsage(id)
+		cpuDiff = cpu - profileData[id].totalCPU
 		
-		profileData[id].cpuSecond = cpu - profileData[id].totalCPU
+		profileData[id].cpuSecond = cpuDiff
+		profileData[id].cpuAverage = profileData[id].cpuAverage + cpuDiff
+		profileData[id].cpuChecks = profileData[id].cpuChecks + 1
 		profileData[id].totalCPU = cpu
 	end
 end
@@ -85,9 +92,10 @@ end
 
 local function startProfiling()
 	AP.selectFrame.start:SetText(L["Stop"])
+	AP.selectFrame.start.isStarted = true
 	
 	-- Figure out when profiling is over
-	profilingInterrupted = false
+	profilerInterrupted = false
 	profileEndTime = GetTime() + AP.db.duration
 
 	-- Reset stats
@@ -105,23 +113,27 @@ local function startProfiling()
 	for k in pairs(hasModules) do hasModules[k] = nil end
 	for id=1, GetNumAddOns() do
 		if( IsAddOnLoaded(id) ) then
-			local requiredDep, hasSecond = GetAddOnDependencies(id)
-			local parent = not hasSecond and requiredDep
 			local name = GetAddOnInfo(id)
-
-			profileData[name] = profileData[name] or {}
-			profileData[name].totalCPU = GetAddOnCPUUsage(id)
-			profileData[name].totalMemory = GetAddOnMemoryUsage(id)
-			profileData[name].cpuSecond = 0
-			profileData[name].garbage = 0
-			profileData[name].parent = parent
-			
-			-- Indicates that when we display the parents addon, we need to find it's children too
-			if( parent and AP.db.includeModules ) then
-				hasModules[parent] = true
+			if( not AP.db.filter or AP.db.filter == "" or string.match(name, AP.db.filter) ) then
+				local requiredDep, hasSecond = GetAddOnDependencies(id)
+				local parent = not hasSecond and requiredDep
+				
+				profileData[name] = profileData[name] or {}
+				profileData[name].totalCPU = GetAddOnCPUUsage(id)
+				profileData[name].totalMemory = GetAddOnMemoryUsage(id)
+				profileData[name].cpuSecond = 0
+				profileData[name].cpuAverage = 0
+				profileData[name].cpuChecks = 0
+				profileData[name].garbage = 0
+				profileData[name].parent = parent
+				
+				-- Indicates that when we display the parents addon, we need to find it's children too
+				if( parent and AP.db.includeModules ) then
+					hasModules[parent] = true
+				end
+				
+				table.insert(addonList, name)
 			end
-			
-			table.insert(addonList, name)
 		end
 	end
 	
@@ -178,15 +190,17 @@ function AP:UpdateFrame()
 	end
 	
 	-- Check if we're done with profiling
-	if( profilingInterrupted ) then
-		AP.infoFrame.time:SetText(L["Profiler interrupted"])
-	elseif( GetTime() < profileEndTime ) then
-		AP.infoFrame.time:SetFormattedText(L["%d seconds left"], profileEndTime - GetTime())
-	else
-		if( AP.selectFrame.start.isStarted ) then
+	local profiling
+	if( profilerInterrupted or profileEndTime <= GetTime() ) then
+		if( not profilerInterrupted and AP.selectFrame.start.isStarted ) then
 			stopProfiling()
 		end
-		AP.infoFrame.time:SetText(L["Finished profiling"])
+		AP.infoFrame.time:SetText(profilerInterrupted and L["PRofiler interrupted"] or L["Finished profiling"])
+		AP.infoFrame.cpuSecond:SetText(L["Avg/Sec"])
+	else
+		profiling = true
+		AP.infoFrame.time:SetFormattedText(L["%d seconds left"], profileEndTime - GetTime())
+		AP.infoFrame.cpuSecond:SetText(L["CPU/Sec"])
 	end
 
 	-- Now actually display it
@@ -217,13 +231,15 @@ function AP:UpdateFrame()
 				row:SetText(title)
 			end
 			
-			local totalCPU, cpuSecond, totalMemory, garbage = profileData[name].totalCPU, profileData[name].cpuSecond, profileData[name].totalMemory, profileData[name].garbage
+			local totalCPU, cpuSecond, cpuAverage, cpuChecks, totalMemory, garbage = profileData[name].totalCPU, profileData[name].cpuSecond, profileData[name].cpuAverage, profileData[name].cpuChecks, profileData[name].totalMemory, profileData[name].garbage
 			-- Grab all of the modules settings
 			if( hasModules[name] ) then
 				for _, data in pairs(profileData) do
 					if( data.parent == name ) then
 						totalCPU = totalCPU + data.totalCPU
 						cpuSecond = cpuSecond + data.cpuSecond
+						cpuAverage = cpuAverage + data.cpuAverage
+						cpuChecks = cpuChecks + data.cpuChecks
 						totalMemory = totalMemory + data.totalMemory
 						garbage = garbage + data.garbage
 					end
@@ -233,7 +249,7 @@ function AP:UpdateFrame()
 			-- Set CPU stats if they're enabled
 			if( cpuProfiling ) then
 				row.totalCPU:SetFormattedText("%.1f", totalCPU)
-				row.cpu:SetFormattedText("%.1f", cpuSecond)
+				row.cpu:SetFormattedText("%.1f", profiling and cpuSecond or (cpuAverage / cpuChecks))
 			end
 			
 			-- Set memory stats
@@ -457,16 +473,37 @@ function AP:CreateFrame()
 		self.quick:SetChecked(AP.db.quickPoll)
 		self.modules:SetChecked(AP.db.includeModules)
 		self.duration:SetNumber(AP.db.duration or 0)
+		self.filter:SetText(AP.db.filter or "")
 		self.cpu:SetChecked(GetCVarBool("scriptProfile"))
 	end)
 	
+	self.selectFrame.filter = CreateFrame("EditBox", "AddOnProfilerFilter", self.selectFrame, "InputBoxTemplate")
+	self.selectFrame.filter:SetHeight(20)
+	self.selectFrame.filter:SetWidth(144)
+	self.selectFrame.filter:SetAutoFocus(false)
+	self.selectFrame.filter:ClearAllPoints()
+	self.selectFrame.filter:SetPoint("TOPLEFT", self.selectFrame, "TOPLEFT", 8, -18)
+	self.selectFrame.filter.tooltip = L["Let's you filter out addons that should not be included in the profiling, not required."]
+	self.selectFrame.filter:SetScript("OnEnter", showTooltip)
+	self.selectFrame.filter:SetScript("OnLeave", hideTooltip)
+	self.selectFrame.filter:SetScript("OnTextChanged", function(self)
+		AP.db.filter = string.trim(self:GetText()) or ""
+	end)
+
+	self.selectFrame.filter.text = self.selectFrame.filter:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	self.selectFrame.filter.text:SetText(L["Addon filter"])
+	self.selectFrame.filter.text:SetPoint("TOPLEFT", self.selectFrame.filter, "TOPLEFT", -4, 14)
+
 	self.selectFrame.duration = CreateFrame("EditBox", "AddOnProfilerTime", self.selectFrame, "InputBoxTemplate")
 	self.selectFrame.duration:SetHeight(20)
 	self.selectFrame.duration:SetWidth(102)
 	self.selectFrame.duration:SetAutoFocus(false)
 	self.selectFrame.duration:SetNumeric(true)
 	self.selectFrame.duration:ClearAllPoints()
-	self.selectFrame.duration:SetPoint("TOPLEFT", self.selectFrame, "TOPLEFT", 8, -18)
+	self.selectFrame.duration:SetPoint("TOPLEFT", self.selectFrame.filter, "BOTTOMLEFT", 0, -18)
+	self.selectFrame.duration.tooltip = L["How long the profiler should run, you have to set a number in seconds."]
+	self.selectFrame.duration:SetScript("OnEnter", showTooltip)
+	self.selectFrame.duration:SetScript("OnLeave", hideTooltip)
 	self.selectFrame.duration:SetScript("OnTextChanged", function(self)
 		AP.db.duration = self:GetNumber() or 0
 	end)
@@ -482,13 +519,11 @@ function AP:CreateFrame()
 	self.selectFrame.start:SetPoint("TOPLEFT", self.selectFrame.duration, "TOPRIGHT", 0, 0)
 	self.selectFrame.start:SetScript("OnClick", function(self)
 		if( self.isStarted ) then
-			profilingInterrupted = true
+			profilerInterrupted = true
 			stopProfiling()
 		else
 			startProfiling()
 		end
-	
-		self.isStarted = not self.isStarted
 	end)
 	
 	self.selectFrame.modules = CreateFrame("CheckButton", nil, self.selectFrame, "OptionsCheckButtonTemplate")
