@@ -1,13 +1,14 @@
 local AP = {}
 local ROW_HEIGHT = 20
-local MAX_ROWS = 12
+local MAX_ROWS = 18
 local sortKey, sortOrder = "totalCPU", true
-local addonList, profileData, hasModules, expandedAddons = {}, {}, {}, {}
-local timeElapsed, profileEndTime, cpuProfiling, profilerInterrupted = 0
+local addonList, profileData, hasModules, collapsedAddons = {}, {}, {}, {}
+local timeElapsed, profileEndTime, cpuProfiling, profilerInterrupted, profileTime = 0
 
 AddonProfiler = AP
 
 local L = {
+	["Finished (%d seconds)"] = "Finished (%d seconds)",
 	["Start"] = "Start",
 	["Stop"] = "Stop",
 	["Let's you filter out addons that should not be included in the profiling, not required."] = "Let's you filter out addons that should not be included in the profiling, not required.",
@@ -118,6 +119,7 @@ local function startProfiling()
 	
 	-- Figure out when profiling is over
 	profilerInterrupted = false
+	profileTime = AP.db.duration
 	profileEndTime = GetTime() + AP.db.duration
 
 	-- Reset stats
@@ -241,7 +243,7 @@ function AP:UpdateFrame()
 		if( not AP.db.includeModules or not profileData[name].parent ) then
 			table.insert(rowList, name)
 			
-			if( hasModules[name] and expandedAddons[name] ) then
+			if( hasModules[name] and not collapsedAddons[name] ) then
 				for _, subName in pairs(addonList) do
 					if( profileData[subName].parent == name ) then
 						table.insert(rowList, subName)
@@ -257,7 +259,7 @@ function AP:UpdateFrame()
 		if( not profilerInterrupted and AP.selectFrame.start.isStarted ) then
 			stopProfiling()
 		end
-		AP.infoFrame.time:SetText(profilerInterrupted and L["PRofiler interrupted"] or L["Finished profiling"])
+		AP.infoFrame.time:SetText(profilerInterrupted and L["Profiler interrupted"] or string.format(L["Finished (%d seconds)"], profileTime))
 		AP.infoFrame.cpuSecond:SetText(L["Avg/Sec"])
 	else
 		profiling = true
@@ -283,7 +285,7 @@ function AP:UpdateFrame()
 			row.addonName = name
 			row:Show()
 
-			if( hasModules[name] and expandedAddons[name] ) then
+			if( hasModules[name] and not collapsedAddons[name] ) then
 				row:SetFormattedText("[|cffff1919-|r] %s", title)
 			elseif( hasModules[name] ) then
 				row:SetFormattedText("[|cff19ff19+|r] %s", title)
@@ -335,10 +337,10 @@ function AP:CreateFrame()
 	self.frame:SetBackdrop(backdrop)
 	self.frame:SetBackdropColor(0, 0, 0, 0.90)
 	self.frame:SetBackdropBorderColor(0.75, 0.75, 0.75, 1)
-	self.frame:SetHeight(270)
+	self.frame:SetHeight(400)
 	self.frame:SetWidth(425)
 	self.frame:ClearAllPoints()
-	self.frame:SetPoint("CENTER", UIParent, "CENTER", 150, 150)
+	self.frame:SetPoint("CENTER", UIParent, "CENTER", 150, 50)
 	self.frame:SetMovable(true)
 	self.frame:SetScript("OnShow", function()
 		if( profileEndTime ) then
@@ -366,7 +368,7 @@ function AP:CreateFrame()
 	end
 	
 	local function toggleParent(self)
-		expandedAddons[self.addonName] = not expandedAddons[self.addonName]
+		collapsedAddons[self.addonName] = not collapsedAddons[self.addonName]
 		AP:UpdateFrame()
 	end
 
@@ -517,7 +519,7 @@ function AP:CreateFrame()
 	self.selectFrame:SetBackdrop(backdrop)
 	self.selectFrame:SetBackdropColor(0, 0, 0, 0.90)
 	self.selectFrame:SetBackdropBorderColor(0.75, 0.75, 0.75, 1)
-	self.selectFrame:SetHeight(295)
+	self.selectFrame:SetHeight(425)
 	self.selectFrame:SetWidth(155)
 	self.selectFrame:ClearAllPoints()
 	self.selectFrame:SetPoint("TOPRIGHT", self.frame, "TOPLEFT", -5, 25)
