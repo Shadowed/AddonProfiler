@@ -32,7 +32,6 @@ local L = {
 }
 
 -- Profile memory stats
-local memory, garbage, data
 local function profileMemory()
 	if( AP.db.garbage ) then
 		-- We're profiling still, so perform a GC step and will see how much garbage was collected
@@ -48,12 +47,12 @@ local function profileMemory()
 	UpdateAddOnMemoryUsage()
 	for _, id in pairs(addonList) do profileData[id].totalMemory = 0 end
 	for _, id in pairs(addonList) do
-		memory = GetAddOnMemoryUsage(id)
-		data = profileData[id]
+		local memory = GetAddOnMemoryUsage(id)
+		local data = profileData[id]
 		
 		-- Memory was reduced, meaning garbage was created.
 		if( AP.db.garbage and memory <= data.lastMemory ) then
-			garbage = data.lastMemory - memory
+			local garbage = data.lastMemory - memory
 
 			data.garbage = data.garbage + garbage
 			
@@ -72,15 +71,14 @@ local function profileMemory()
 end
 
 -- Profile CPU usage
-local cpu, cpuDiff
 local function profileCPU()
 	UpdateAddOnCPUUsage()
 
 	for _, id in pairs(addonList) do profileData[id].totalCPU = 0 end
 	for _, id in pairs(addonList) do
-		data = profileData[id]
-		cpu = GetAddOnCPUUsage(id)
-		cpuDiff = cpu - data.lastCPU
+		local data = profileData[id]
+		local cpu = GetAddOnCPUUsage(id)
+		local cpuDiff = cpu - data.lastCPU
 		
 		data.cpuSecond = cpuDiff
 		data.cpuAverage = data.cpuAverage + cpuDiff
@@ -90,7 +88,6 @@ local function profileCPU()
 		
 		if( data.parent ) then
 			profileData[data.parent].cpuAverage = profileData[data.parent].cpuAverage + cpuDiff
-			profileData[data.parent].cpuChecks = profileData[data.parent].cpuChecks + 1
 			profileData[data.parent].cpuSecond = profileData[data.parent].cpuSecond + cpuDiff
 			profileData[data.parent].totalCPU = profileData[data.parent].totalCPU + cpu
 		end
