@@ -1,35 +1,10 @@
 local AP = {}
+local L = AddonProfilerLocals
 local ROW_HEIGHT = 20
 local MAX_ROWS = 18
 local sortKey, sortOrder = "totalCPU", true
 local addonList, profileData, hasModules, collapsedAddons = {}, {}, {}, {}
 local timeElapsed, profileEndTime, cpuProfiling, profilerInterrupted, profileTime = 0
-
-AddonProfiler = AP
-
-local L = {
-	["Finished (%d seconds)"] = "Finished (%d seconds)",
-	["Start"] = "Start",
-	["Stop"] = "Stop",
-	["Let's you filter out addons that should not be included in the profiling, not required."] = "Let's you filter out addons that should not be included in the profiling, not required.",
-	["Addon filter"] = "Addon filter",
-	["Profile duration (seconds)"] = "Profile duration (seconds)",
-	["Include modules"] = "Include modules",
-	["%d seconds left"] = "%d seconds left",
-	["Enable CPU profiling"] = "Enable CPU profiling",
-	["Automatically merges any children addons into their parents, all CPU and memory stats are merged into their parent. This will give you a more accurate overview of what resources addons are actually using."] = "Automatically merges any children addons into their parents, all CPU and memory stats are merged into their parent. This will give you a more accurate overview of what resources addons are actually using.",
-	["Enables CPU profiling, you will need to do a /console reloadui for this to be enabled."] = "Enables CPU profiling, you will need to do a /console reloadui for this to be enabled.",
-	["Finished profiling"] = "Finished profiling",
-	["Profiler interrupted"] = "Profiler interrupted",
-	["How long the profiler should run, you have to set a number in seconds."] = "How long the profiler should run, you have to set a number in seconds.",
-	["CPU"] = "CPU",
-	["CPU/Sec"] = "CPU/Sec",
-	["Avg/Sec"] = "Avg/Sec",
-	["Memory"] = "Memory",
-	["Track memory garbage"] = "Track memory garbage",
-	["Tracks how much garbage addons generate, while this should work fine it might be prone to bugs due to manually running the garbage collection."] = "Tracks how much garbage addons generate, while this should work fine it might be prone to bugs due to manually running the garbage collection.",
-	["Garbage"] = "Garbage",
-}
 
 -- Profile memory stats
 local function profileMemory()
@@ -294,7 +269,7 @@ function AP:UpdateFrame()
 			
 			-- Set CPU stats if they're enabled
 			if( cpuProfiling ) then
-				row.totalCPU:SetFormattedText("%.2f", profileData[name].totalCPU)
+				row.totalCPU:SetFormattedText("%.2f", profileData[name].totalCPU / 1000)
 				row.cpu:SetFormattedText("%.2f", profiling and profileData[name].cpuSecond or (profileData[name].cpuAverage / profileData[name].cpuChecks))
 			end
 			
@@ -621,8 +596,23 @@ function AP:CreateFrame()
 	self.selectFrame.cpu.text = self.selectFrame.cpu:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	self.selectFrame.cpu.text:SetText(L["Enable CPU profiling"])
 	self.selectFrame.cpu.text:SetPoint("TOPLEFT", self.selectFrame.cpu, "TOPRIGHT", -1, -3)
+	
+	self.selectFrame.info = self.selectFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	self.selectFrame.info:SetHeight(1)
+	self.selectFrame.info:SetWidth(1)
+	self.selectFrame.info:SetAllPoints(self.selectFrame)
+	self.selectFrame.info:SetJustifyH("LEFT")
+	self.selectFrame.info:SetText(L["CPU is shown in seconds\nCPU/Sec is shown in milliseconds\n"])
 end
 
+SLASH_ADDONPROFILER1 = nil
+SlashCmdList["ADDONPROFILER"] = nil
+
+SLASH_AP1 = nil
+SlashCmdList["AP"] = nil
+
+SlASH_PROFILE1 = nil
+SlashCmdList["PROFILE"] = nil
 
 SLASH_ADDONPROFILE1 = "/addonprofiler"
 SLASH_ADDONPROFILE2 = "/addonprofile"
