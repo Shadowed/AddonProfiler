@@ -1,7 +1,10 @@
-## Interface: 30100
+## Interface: 30200
 ## Title: Addon Profiler
 ## Notes: Easy addon cpu and garbage generator profiler
-## Author: Mayen
+## Author: Shadowed
+## LoadManagers: AddonLoader
+## X-LoadOn-Slash: /addonprofiler, /addonprofile, /ap, /profile
 ## SavedVariables: AddonProfilerDB
 
+localization.enUS.lua
 AddonProfiler.lua
