@@ -52,19 +52,21 @@ local function profileCPU()
 	for _, id in pairs(addonList) do profileData[id].totalCPU = 0 end
 	for _, id in pairs(addonList) do
 		local data = profileData[id]
-		local cpu = GetAddOnCPUUsage(id)
-		local cpuDiff = cpu - data.lastCPU
-		
-		data.cpuSecond = cpuDiff
-		data.cpuAverage = data.cpuAverage + cpuDiff
-		data.cpuChecks = data.cpuChecks + 1
-		data.lastCPU = cpu
-		data.totalCPU = data.totalCPU + cpu
-		
-		if( data.parent ) then
-			profileData[data.parent].cpuAverage = profileData[data.parent].cpuAverage + cpuDiff
-			profileData[data.parent].cpuSecond = profileData[data.parent].cpuSecond + cpuDiff
-			profileData[data.parent].totalCPU = profileData[data.parent].totalCPU + cpu
+		if( profileData[id] ) then
+			local cpu = GetAddOnCPUUsage(id)
+			local cpuDiff = cpu - data.lastCPU
+			
+			data.cpuSecond = cpuDiff
+			data.cpuAverage = data.cpuAverage + cpuDiff
+			data.cpuChecks = data.cpuChecks + 1
+			data.lastCPU = cpu
+			data.totalCPU = data.totalCPU + cpu
+			
+			if( data.parent ) then
+				profileData[data.parent].cpuAverage = profileData[data.parent].cpuAverage + cpuDiff
+				profileData[data.parent].cpuSecond = profileData[data.parent].cpuSecond + cpuDiff
+				profileData[data.parent].totalCPU = profileData[data.parent].totalCPU + cpu
+			end
 		end
 	end
 end
@@ -150,6 +152,14 @@ local function startProfiling()
 					end
 				end
 			end
+		end
+	end
+	
+	-- Now go back and orphan the children who are without parents
+	for name, data in pairs(profileData) do
+		if( data.parent and not profileData[data.parent] ) then
+			hasModules[data.parent] = nil
+			data.parent = nil
 		end
 	end
 	
